@@ -1,1 +1,0 @@
-go mod init github.com/soltanireza65/go-ts-dev
