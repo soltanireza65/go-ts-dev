@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,59 +11,61 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/soltanireza65/go-ts-dev/internal/handlers"
-	"github.com/soltanireza65/go-ts-dev/internal/store"
 )
 
 func main() {
-
-	todos := []store.Todo{}
-
 	r := chi.NewRouter()
 
-	// Use chi's logger and recover middlewares for better error handling
-	r.Use(middleware.Logger)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{}))
 
-	r.Get("/healthcheck", handlers.NewHealthcheckHandler().Excute)
+	serverCtx, serverStopCancelFunc := context.WithCancel(context.Background())
 
-	// r.Post("/todos", handlers.NewCreateTodoHandler(&todos).Excute)
-
-	r.Post("/todos", handlers.NewCreateTodoHandler(handlers.CreateTodoHandlerParams{Todos: &todos}).Excute)
-
-	r.Get("/todos", handlers.NewListTodosHandler(handlers.ListTodosHandlerParams{Todos: &todos}).Excute)
+	killSigChan := make(chan os.Signal, 1)
+	signal.Notify(killSigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	srv := &http.Server{
 		Addr:    ":8080",
 		Handler: r,
 	}
 
-	// Create a channel to listen for OS signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-killSigChan
+		logger.Info("got kill signal - shutting down", slog.String("signal", sig.String()))
+
+		shutdownCtx, shutdownCancelFunc := context.WithTimeout(serverCtx, 5*time.Second)
+
+		go func() {
+			<-shutdownCtx.Done()
+			if shutdownCtx.Err() == context.DeadlineExceeded {
+				// print("graceful shutdown timed out - forcing exit\n")
+				// os.Exit(1)
+				log.Fatal("shutdown deadline exceeded")
+			}
+		}()
+
+		err := srv.Shutdown(shutdownCtx)
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		serverStopCancelFunc()
+		logger.Info("server shutting down")
+		shutdownCancelFunc()
+	}()
 
 	go func() {
-		fmt.Println("Server is running on :8080")
+		err := srv.ListenAndServe()
 
-		if err := srv.ListenAndServe(); err != nil {
-			fmt.Printf("Error: %v\n", err)
+		if err != nil {
+			log.Fatal(err)
 		}
 	}()
 
-	fmt.Println("Press Ctrl+C to stop the server")
+	r.Get("/healthcheck", handlers.NewHealthcheckHandler().Excute)
 
-	// Wait for signals to gracefully shut down the server
-	<-sigCh
+	logger.Info("read to work")
 
-	fmt.Println("Shutting down the server...")
-
-	// Create a context with a timeout for the graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(ctx); err != nil {
-		fmt.Printf("Error: %v\n", err)
-	}
-
-	fmt.Println("Server gracefully stopped")
+	<-serverCtx.Done()
 }
