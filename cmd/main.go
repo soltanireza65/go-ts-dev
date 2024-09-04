@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,50 +11,26 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/soltanireza65/go-ts-dev/internal/handlers"
+	"github.com/soltanireza65/go-ts-dev/internal/store"
 )
-
-type Todo struct {
-	Title string `json:"title"`
-	Done  bool   `json:"done"`
-}
 
 func main() {
 
-	todos := []Todo{}
+	todos := []store.Todo{}
 
 	r := chi.NewRouter()
 
 	// Use chi's logger and recover middlewares for better error handling
 	r.Use(middleware.Logger)
 
-	r.Get("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("OK"))
-	})
+	r.Get("/healthcheck", handlers.NewHealthcheckHandler().Excute)
 
-	r.Post("/todos", func(w http.ResponseWriter, r *http.Request) {
-		todo := Todo{}
-		err := json.NewDecoder(r.Body).Decode(&todo)
+	// r.Post("/todos", handlers.NewCreateTodoHandler(&todos).Excute)
 
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	r.Post("/todos", handlers.NewCreateTodoHandler(handlers.CreateTodoHandlerParams{Todos: &todos}).Excute)
 
-		todos = append(todos, todo)
-
-		w.WriteHeader(http.StatusCreated)
-	})
-
-	r.Get("/todos", func(w http.ResponseWriter, r *http.Request) {
-
-		w.Header().Set("Content-Type", "application/json")
-		err := json.NewEncoder(w).Encode(todos)
-
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-	})
+	r.Get("/todos", handlers.NewListTodosHandler(handlers.ListTodosHandlerParams{Todos: &todos}).Excute)
 
 	srv := &http.Server{
 		Addr:    ":8080",
